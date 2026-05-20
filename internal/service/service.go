@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"org-structure-api/internal/models"
 	"org-structure-api/internal/repository"
 )
@@ -80,6 +82,9 @@ func (s *departmentService) CreateDepartment(ctx context.Context, input CreateDe
 		ParentID: input.ParentID,
 	}
 	if err := s.repo.CreateDepartment(ctx, department); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrConflict
+		}
 		return nil, err
 	}
 
@@ -182,6 +187,9 @@ func (s *departmentService) UpdateDepartment(ctx context.Context, departmentID i
 	}
 
 	if err := s.repo.UpdateDepartment(ctx, department); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrConflict
+		}
 		return nil, err
 	}
 
@@ -319,4 +327,9 @@ func normalizeRequired(value, field string) (string, error) {
 
 func validationError(message string) error {
 	return ValidationError{Message: message}
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

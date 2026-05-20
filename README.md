@@ -1,29 +1,29 @@
-# Organizational Structure API
+# API организационной структуры
 
-Test assignment service for departments and employees.
+Тестовое задание на Go: API для работы с подразделениями и сотрудниками.
 
-Stack:
+Используемый стек:
 - Go
 - `net/http`
 - GORM
 - PostgreSQL
-- goose migrations
+- goose
 - Docker / Docker Compose
 
-## Features
+## Возможности
 
-- CRUD-style endpoints for departments and employees
-- Nested department tree with configurable `depth`
-- Optional employee inclusion via `include_employees`
-- Validation for required fields and max length
-- Trimmed department and employee string fields
-- Duplicate department name protection within the same parent
-- Cycle protection when moving a department
-- Cascade delete via PostgreSQL foreign keys
-- `reassign` delete mode for the whole department subtree
-- Basic tests
+- создание подразделений;
+- создание сотрудников в подразделении;
+- получение подразделения вместе с деревом дочерних подразделений;
+- перенос подразделения в другое подразделение;
+- удаление подразделения в режимах `cascade` и `reassign`;
+- валидация входных данных;
+- защита от циклов при переносе подразделения;
+- миграции через `goose`;
+- запуск через `docker-compose`;
+- базовые тесты.
 
-## Project structure
+## Структура проекта
 
 ```text
 .
@@ -43,15 +43,17 @@ Stack:
 └── README.md
 ```
 
-## Run
+## Запуск
 
 ```bash
 docker-compose up --build
 ```
 
-API will be available at `http://localhost:8080`.
+После запуска API будет доступно по адресу:
 
-## Endpoints
+`http://localhost:8080`
+
+## Эндпоинты
 
 - `POST /departments`
 - `POST /departments/{id}/employees`
@@ -60,11 +62,11 @@ API will be available at `http://localhost:8080`.
 - `DELETE /departments/{id}?mode=cascade`
 - `DELETE /departments/{id}?mode=reassign&reassign_to_department_id=10`
 
-Both `/departments` and `/departments/` work.
+Поддерживаются оба варианта URL: со слешем на конце и без него.
 
-## Request examples
+## Примеры запросов
 
-Create department:
+Создать подразделение:
 
 ```bash
 curl -X POST http://localhost:8080/departments \
@@ -72,7 +74,7 @@ curl -X POST http://localhost:8080/departments \
   -d '{"name":"Backend"}'
 ```
 
-Create child department:
+Создать дочернее подразделение:
 
 ```bash
 curl -X POST http://localhost:8080/departments \
@@ -80,7 +82,7 @@ curl -X POST http://localhost:8080/departments \
   -d '{"name":"Platform","parent_id":1}'
 ```
 
-Create employee:
+Создать сотрудника:
 
 ```bash
 curl -X POST http://localhost:8080/departments/1/employees \
@@ -88,13 +90,13 @@ curl -X POST http://localhost:8080/departments/1/employees \
   -d '{"full_name":"Ivan Petrov","position":"Go Developer","hired_at":"2025-11-01"}'
 ```
 
-Get tree:
+Получить дерево подразделений:
 
 ```bash
 curl "http://localhost:8080/departments/1?depth=2&include_employees=true"
 ```
 
-Move department:
+Переместить подразделение:
 
 ```bash
 curl -X PATCH http://localhost:8080/departments/2 \
@@ -102,66 +104,80 @@ curl -X PATCH http://localhost:8080/departments/2 \
   -d '{"parent_id":1,"name":"Platform"}'
 ```
 
-Delete with cascade:
+Удалить подразделение каскадно:
 
 ```bash
 curl -X DELETE "http://localhost:8080/departments/2?mode=cascade"
 ```
 
-Delete with reassign:
+Удалить подразделение с переводом сотрудников:
 
 ```bash
 curl -X DELETE "http://localhost:8080/departments/2?mode=reassign&reassign_to_department_id=1"
 ```
 
-## Business rules
+## Основные бизнес-правила
 
-- Department `name`, employee `full_name`, and employee `position` are required and limited to 200 characters.
-- Department names are unique within the same parent.
-- Root departments use a separate partial unique index because PostgreSQL allows multiple `NULL` values in a composite unique index.
-- A department cannot become its own parent.
-- A department cannot be moved inside its own subtree.
-- `depth` defaults to `1` and is limited to `0..5`.
-- Employees are sorted by `full_name`.
+- `name` у подразделения обязателен, обрезается по краям и ограничен 200 символами;
+- `full_name` и `position` у сотрудника обязательны и ограничены 200 символами;
+- в рамках одного `parent_id` названия подразделений уникальны;
+- для корневых подразделений используется отдельный partial unique index, потому что в PostgreSQL `NULL != NULL`;
+- нельзя сделать подразделение родителем самого себя;
+- нельзя переместить подразделение внутрь собственного поддерева;
+- `depth` по умолчанию равен `1`, допустимый диапазон: `0..5`;
+- сотрудники в ответе сортируются по `full_name`.
 
-### Reassign mode
+## Поведение удаления
 
-`mode=reassign` deletes the entire subtree of the selected department.
+### `mode=cascade`
 
-Before deletion, all employees from the whole subtree are moved to `reassign_to_department_id`.
+Удаляется всё поддерево подразделения вместе с сотрудниками.
 
-The target department cannot be the department being deleted or any department inside that subtree.
+Каскадное удаление обеспечивается внешними ключами с `ON DELETE CASCADE`.
 
-## Migrations
+### `mode=reassign`
 
-The initial migration creates:
+Удаляется всё поддерево подразделения.
 
-- `departments.parent_id` foreign key to `departments.id`
-- partial unique indexes for root and nested department names
-- `employees.department_id` foreign key to `departments.id`
-- `ON DELETE CASCADE` for child departments and employees
+Перед удалением все сотрудники из всего поддерева переводятся в подразделение `reassign_to_department_id`.
 
-## Tests
+Ограничения:
 
-Run locally if Go is installed:
+- `reassign_to_department_id` обязателен;
+- нельзя переводить сотрудников в удаляемое подразделение;
+- нельзя переводить сотрудников в подразделение из удаляемого поддерева.
+
+## Миграции
+
+Начальная миграция создаёт:
+
+- `departments.parent_id` как FK на `departments.id`;
+- partial unique indexes для корневых и вложенных подразделений;
+- `employees.department_id` как FK на `departments.id`;
+- каскадное удаление для сотрудников и дочерних подразделений.
+
+## Тесты
+
+Если Go установлен локально:
 
 ```bash
 go test ./...
 ```
 
-Or run in Docker:
+Проверка через Docker:
 
 ```bash
 docker build -t org-structure-api-test .
 ```
 
-The project includes tests for:
+В проекте есть тесты на:
 
-- creating a department
-- cycle protection on `PATCH /departments/{id}`
-- returning a department tree
+- создание подразделения;
+- защиту от цикла при `PATCH /departments/{id}`;
+- возврат дерева подразделений.
 
-## Notes
+## Примечания
 
-- The tree is built recursively in the service layer, which is acceptable for a test assignment.
-- For a production version, tree loading could be optimized with a recursive CTE.
+- дерево подразделений собирается рекурсивно на уровне service;
+- для production-решения это можно оптимизировать через recursive CTE;
+- для тестового задания текущей реализации достаточно и она хорошо читается.
